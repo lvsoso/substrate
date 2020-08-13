@@ -215,6 +215,25 @@ fn getter_code<T: Trait>(getter_name: &'static str, repeat: u32) -> WasmModule<T
 	})
 }
 
+fn hasher_code<T: Trait>(name: &'static str, repeat: u32, data_size: u32) -> WasmModule<T> {
+	let pages = max_pages::<T>();
+	create_code::<T>(ModuleDefinition {
+		memory: Some(ImportedMemory { min_pages: pages, max_pages: pages }),
+		imported_functions: vec![ImportedFunction {
+			name: name,
+			params: vec![ValueType::I32, ValueType::I32, ValueType::I32],
+			return_type: None,
+		}],
+		call_body: Some(body_from_repeated(&[
+			Instruction::I32Const(0), // input_ptr
+			Instruction::I32Const(data_size as i32), // input_len
+			Instruction::I32Const(0), // output_ptr
+			Instruction::Call(0),
+		], repeat)),
+		.. Default::default()
+	})
+}
+
 fn instantiate_contract<T: Trait>(
 	module: WasmModule<T>,
 	data: Vec<u8>,
@@ -583,6 +602,82 @@ benchmarks! {
 		let instance = instantiate_contract::<T>(code, vec![])?;
 		let origin = RawOrigin::Signed(instance.caller.clone());
 	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+	seal_hash_sha2_256 {
+		let r in 0 .. API_BENCHMARK_BATCHES;
+		let pages = max_pages::<T>();
+		let instance = instantiate_contract::<T>(hasher_code(
+			"seal_hash_sha2_256", r * API_BENCHMARK_BATCH_SIZE, 1,
+		), vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+	// `n`: Input to hash in kilobytes
+	seal_hash_sha2_256_per_kb {
+		let n in 0 .. max_pages::<T>() * 64;
+		let pages = max_pages::<T>();
+		let instance = instantiate_contract::<T>(hasher_code(
+			"seal_hash_sha2_256", 1, n * 1024,
+		), vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+	seal_hash_keccak_256 {
+		let r in 0 .. API_BENCHMARK_BATCHES;
+		let pages = max_pages::<T>();
+		let instance = instantiate_contract::<T>(hasher_code(
+			"seal_hash_keccak_256", r * API_BENCHMARK_BATCH_SIZE, 1,
+		), vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+	// `n`: Input to hash in kilobytes
+	seal_hash_keccak_256_per_kb {
+		let n in 0 .. max_pages::<T>() * 64;
+		let pages = max_pages::<T>();
+		let instance = instantiate_contract::<T>(hasher_code(
+			"seal_hash_keccak_256", 1, n * 1024,
+		), vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+	seal_hash_blake2_256 {
+		let r in 0 .. API_BENCHMARK_BATCHES;
+		let pages = max_pages::<T>();
+		let instance = instantiate_contract::<T>(hasher_code(
+			"seal_hash_blake2_256", r * API_BENCHMARK_BATCH_SIZE, 1,
+		), vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+	// `n`: Input to hash in kilobytes
+	seal_hash_blake2_256_per_kb {
+		let n in 0 .. max_pages::<T>() * 64;
+		let pages = max_pages::<T>();
+		let instance = instantiate_contract::<T>(hasher_code(
+			"seal_hash_blake2_256", 1, n * 1024,
+		), vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+	seal_hash_blake2_128 {
+		let r in 0 .. API_BENCHMARK_BATCHES;
+		let pages = max_pages::<T>();
+		let instance = instantiate_contract::<T>(hasher_code(
+			"seal_hash_blake2_128", r * API_BENCHMARK_BATCH_SIZE, 1,
+		), vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+	// `n`: Input to hash in kilobytes
+	seal_hash_blake2_128_per_kb {
+		let n in 0 .. max_pages::<T>() * 64;
+		let pages = max_pages::<T>();
+		let instance = instantiate_contract::<T>(hasher_code(
+			"seal_hash_blake2_128", 1, n * 1024,
+		), vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
 }
 
 #[cfg(test)]
@@ -590,131 +685,45 @@ mod tests {
 	use super::*;
 	use crate::tests::{ExtBuilder, Test};
 	use frame_support::assert_ok;
+	use paste::paste;
 
-	#[test]
-	fn update_schedule() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_update_schedule::<Test>());
-		});
+	macro_rules! create_test {
+		($name:ident) => {
+			#[test]
+			fn $name() {
+				ExtBuilder::default().build().execute_with(|| {
+					assert_ok!(paste!{
+						[<test_benchmark_ $name>]::<Test>()
+					});
+				});
+			}
+		}
 	}
 
-	#[test]
-	fn put_code() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_put_code::<Test>());
-		});
-	}
-
-	#[test]
-	fn instantiate() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_instantiate::<Test>());
-		});
-	}
-
-	#[test]
-	fn call() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_call::<Test>());
-		});
-	}
-
-	#[test]
-	fn claim_surcharge() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_claim_surcharge::<Test>());
-		});
-	}
-
-	
-	#[test]
-	fn seal_caller() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_caller::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_address() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_address::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_gas_left() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_gas_left::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_balance() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_balance::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_value_transferred() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_value_transferred::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_minimum_balance() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_minimum_balance::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_tombstone_deposit() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_tombstone_deposit::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_rent_allowance() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_rent_allowance::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_block_number() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_block_number::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_weight_to_fee() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_weight_to_fee::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_gas() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_gas::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_input() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_input::<Test>());
-		});
-	}
-
-	#[test]
-	fn seal_random() {
-		ExtBuilder::default().build().execute_with(|| {
-			assert_ok!(test_benchmark_seal_random::<Test>());
-		});
-	}
+	create_test!(update_schedule);
+	create_test!(put_code);
+	create_test!(instantiate);
+	create_test!(call);
+	create_test!(claim_surcharge);
+	create_test!(seal_caller);
+	create_test!(seal_address);
+	create_test!(seal_gas_left);
+	create_test!(seal_balance);
+	create_test!(seal_value_transferred);
+	create_test!(seal_minimum_balance);
+	create_test!(seal_tombstone_deposit);
+	create_test!(seal_rent_allowance);
+	create_test!(seal_block_number);
+	create_test!(seal_weight_to_fee);
+	create_test!(seal_gas);
+	create_test!(seal_input);
+	create_test!(seal_random);
+	create_test!(seal_hash_sha2_256);
+	create_test!(seal_hash_sha2_256_per_kb);
+	create_test!(seal_hash_keccak_256);
+	create_test!(seal_hash_keccak_256_per_kb);
+	create_test!(seal_hash_blake2_256);
+	create_test!(seal_hash_blake2_256_per_kb);
+	create_test!(seal_hash_blake2_128);
+	create_test!(seal_hash_blake2_128_per_kb);
 }
