@@ -315,16 +315,18 @@ benchmarks! {
 
 	// This constructs a contract that is maximal expensive to instrument.
 	// It creates a maximum number of metering blocks per byte.
+	// `n`: Size of the code in kilobytes.
 	put_code {
-		let n in 0 .. Contracts::<T>::current_schedule().max_code_size;
+		let n in 0 .. Contracts::<T>::current_schedule().max_code_size / 1024;
 		let caller = create_funded_user::<T>("caller", 0);
-		let module = sized_code::<T>(n);
+		let module = sized_code::<T>(n * 1024);
 		let origin = RawOrigin::Signed(caller);
 	}: _(origin, module.code)
 
 	// Instantiate uses a dummy contract constructor to measure the overhead of the instantiate.
 	// The size of the input data influences the runtime because it is hashed in order to determine
-	// the contract address.
+	// the contract address. 
+	// `n`: Size of the data passed to constructor in kilobytes.
 	instantiate {
 		let n in 0 .. max_pages::<T>() * 64;
 		let data = vec![42u8; (n * 1024) as usize];
@@ -351,6 +353,7 @@ benchmarks! {
 	// part of `seal_input`.
 	// However, we still use data size as component here as it will be removed by the benchmarking
 	// as it has no influence on the weight. This works as "proof" and as regression test.
+	// `n`: Size of the data passed to call in bytes.
 	call {
 		let n in 0 .. u16::max_value() as u32;
 		let data = vec![0u8; n as usize];
@@ -473,6 +476,32 @@ benchmarks! {
 		let origin = RawOrigin::Signed(instance.caller.clone());
 	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
 
+	seal_weight_to_fee {
+		let r in 0 .. API_BENCHMARK_BATCHES;
+		let pages = max_pages::<T>();
+		let code = create_code::<T>(ModuleDefinition {
+			memory: Some(ImportedMemory { min_pages: pages, max_pages: pages }),
+			imported_functions: vec![ImportedFunction {
+				name: "seal_weight_to_fee",
+				params: vec![ValueType::I64, ValueType::I32, ValueType::I32],
+				return_type: None,
+			}],
+			data_segments: vec![DataSegment {
+				offset: 0,
+				value: (pages * 64 * 1024 - 4).to_le_bytes().to_vec(),
+			}],
+			call_body: Some(body_from_repeated(&[
+				Instruction::I64Const(500_000),
+				Instruction::I32Const(4),
+				Instruction::I32Const(0),
+				Instruction::Call(0),
+			], r * API_BENCHMARK_BATCH_SIZE)),
+			.. Default::default()
+		});
+		let instance = instantiate_contract::<T>(code, vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
 	seal_gas {
 		let r in 0 .. API_BENCHMARK_BATCHES;
 		let code = create_code(ModuleDefinition {
@@ -520,6 +549,40 @@ benchmarks! {
 		let data = vec![42u8; (n * 1024).saturating_sub(4) as usize];
 		let origin = RawOrigin::Signed(instance.caller.clone());
 	}: call(origin, instance.addr, 0.into(), Weight::max_value(), data)
+
+	// We benchmark only for the maximum subject length. We assume that this is some lowish
+	// number (< 1 KB). Therefore we are not overcharging too much in case a smaller subject is
+	// used.
+	seal_random {
+		let r in 0 .. API_BENCHMARK_BATCHES;
+		let pages = max_pages::<T>();
+		let subject_len = Contracts::<T>::current_schedule().max_subject_len;
+		assert!(subject_len < 1024, "Subject ");
+		let code = create_code::<T>(ModuleDefinition {
+			memory: Some(ImportedMemory { min_pages: pages, max_pages: pages }),
+			imported_functions: vec![ImportedFunction {
+				name: "seal_random",
+				params: vec![ValueType::I32, ValueType::I32, ValueType::I32, ValueType::I32],
+				return_type: None,
+			}],
+			data_segments: vec![
+				DataSegment {
+					offset: 0,
+					value: (pages * 64 * 1024 - subject_len - 4).to_le_bytes().to_vec(),
+				},
+			],
+			call_body: Some(body_from_repeated(&[
+				Instruction::I32Const(4), // subject_ptr
+				Instruction::I32Const(subject_len as i32), // subject_len
+				Instruction::I32Const((subject_len + 4) as i32), // out_ptr
+				Instruction::I32Const(0),	// out_len_ptr
+				Instruction::Call(0),
+			], r * API_BENCHMARK_BATCH_SIZE)),
+			.. Default::default()
+		});
+		let instance = instantiate_contract::<T>(code, vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
 }
 
 #[cfg(test)]
@@ -628,6 +691,13 @@ mod tests {
 	}
 
 	#[test]
+	fn seal_weight_to_fee() {
+		ExtBuilder::default().build().execute_with(|| {
+			assert_ok!(test_benchmark_seal_weight_to_fee::<Test>());
+		});
+	}
+
+	#[test]
 	fn seal_gas() {
 		ExtBuilder::default().build().execute_with(|| {
 			assert_ok!(test_benchmark_seal_gas::<Test>());
@@ -638,6 +708,13 @@ mod tests {
 	fn seal_input() {
 		ExtBuilder::default().build().execute_with(|| {
 			assert_ok!(test_benchmark_seal_input::<Test>());
+		});
+	}
+
+	#[test]
+	fn seal_random() {
+		ExtBuilder::default().build().execute_with(|| {
+			assert_ok!(test_benchmark_seal_random::<Test>());
 		});
 	}
 }
