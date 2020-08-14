@@ -576,7 +576,7 @@ benchmarks! {
 		let r in 0 .. API_BENCHMARK_BATCHES;
 		let pages = max_pages::<T>();
 		let subject_len = Contracts::<T>::current_schedule().max_subject_len;
-		assert!(subject_len < 1024, "Subject ");
+		assert!(subject_len < 1024);
 		let code = create_code::<T>(ModuleDefinition {
 			memory: Some(ImportedMemory { min_pages: pages, max_pages: pages }),
 			imported_functions: vec![ImportedFunction {
@@ -603,11 +603,72 @@ benchmarks! {
 		let origin = RawOrigin::Signed(instance.caller.clone());
 	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
 
+	// Only the overhead of calling the function itself with minimal arguments.
+	seal_deposit_event {
+		let r in 0 .. API_BENCHMARK_BATCHES;
+		let pages = max_pages::<T>();
+		let code = create_code::<T>(ModuleDefinition {
+			memory: Some(ImportedMemory { min_pages: pages, max_pages: pages }),
+			imported_functions: vec![ImportedFunction {
+				name: "seal_deposit_event",
+				params: vec![ValueType::I32, ValueType::I32, ValueType::I32, ValueType::I32],
+				return_type: None,
+			}],
+			call_body: Some(body_from_repeated(&[
+				Instruction::I32Const(0), // topics_ptr
+				Instruction::I32Const(0), // topics_len
+				Instruction::I32Const(0), // data_ptr
+				Instruction::I32Const(0), // data_len
+				Instruction::Call(0),
+			], r * API_BENCHMARK_BATCH_SIZE)),
+			.. Default::default()
+		});
+		let instance = instantiate_contract::<T>(code, vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
+
+	// Benchmark the overhead that topics and data add.
+	seal_deposit_event_per_topic_and_data {
+		let n in 0 .. (max_pages::<T>() * 64) / 2;
+		let t in 0 .. Contracts::<T>::current_schedule().max_event_topics;
+		let pages = max_pages::<T>();
+		let topics = (0 .. t)
+			.map(|n| T::Hashing::hash_of(&n)).collect::<Vec<_>>()
+			.encode();
+		let topics_len = topics.len();
+		let code = create_code::<T>(ModuleDefinition {
+			memory: Some(ImportedMemory { min_pages: pages, max_pages: pages }),
+			imported_functions: vec![ImportedFunction {
+				name: "seal_deposit_event",
+				params: vec![ValueType::I32, ValueType::I32, ValueType::I32, ValueType::I32],
+				return_type: None,
+			}],
+			data_segments: vec![
+				DataSegment {
+					offset: 0,
+					value: topics,
+				},
+			],
+			call_body: Some(body(vec![
+				Instruction::I32Const(0), // topics_ptr
+				Instruction::I32Const(topics_len as i32), // topics_len
+				Instruction::I32Const(topics_len as i32), // data_ptr
+				Instruction::I32Const((n * 1024).saturating_sub(topics_len as u32) as i32), // len
+				Instruction::Call(0),
+				Instruction::End,
+			])),
+			.. Default::default()
+		});
+		let instance = instantiate_contract::<T>(code, vec![])?;
+		let origin = RawOrigin::Signed(instance.caller.clone());
+	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
+
 	seal_hash_sha2_256 {
 		let r in 0 .. API_BENCHMARK_BATCHES;
 		let pages = max_pages::<T>();
 		let instance = instantiate_contract::<T>(hasher_code(
-			"seal_hash_sha2_256", r * API_BENCHMARK_BATCH_SIZE, 1,
+			"seal_hash_sha2_256", r * API_BENCHMARK_BATCH_SIZE, 0,
 		), vec![])?;
 		let origin = RawOrigin::Signed(instance.caller.clone());
 	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
@@ -626,7 +687,7 @@ benchmarks! {
 		let r in 0 .. API_BENCHMARK_BATCHES;
 		let pages = max_pages::<T>();
 		let instance = instantiate_contract::<T>(hasher_code(
-			"seal_hash_keccak_256", r * API_BENCHMARK_BATCH_SIZE, 1,
+			"seal_hash_keccak_256", r * API_BENCHMARK_BATCH_SIZE, 0,
 		), vec![])?;
 		let origin = RawOrigin::Signed(instance.caller.clone());
 	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
@@ -645,7 +706,7 @@ benchmarks! {
 		let r in 0 .. API_BENCHMARK_BATCHES;
 		let pages = max_pages::<T>();
 		let instance = instantiate_contract::<T>(hasher_code(
-			"seal_hash_blake2_256", r * API_BENCHMARK_BATCH_SIZE, 1,
+			"seal_hash_blake2_256", r * API_BENCHMARK_BATCH_SIZE, 0,
 		), vec![])?;
 		let origin = RawOrigin::Signed(instance.caller.clone());
 	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
@@ -664,7 +725,7 @@ benchmarks! {
 		let r in 0 .. API_BENCHMARK_BATCHES;
 		let pages = max_pages::<T>();
 		let instance = instantiate_contract::<T>(hasher_code(
-			"seal_hash_blake2_128", r * API_BENCHMARK_BATCH_SIZE, 1,
+			"seal_hash_blake2_128", r * API_BENCHMARK_BATCH_SIZE, 0,
 		), vec![])?;
 		let origin = RawOrigin::Signed(instance.caller.clone());
 	}: call(origin, instance.addr, 0.into(), Weight::max_value(), vec![])
@@ -718,6 +779,8 @@ mod tests {
 	create_test!(seal_gas);
 	create_test!(seal_input);
 	create_test!(seal_random);
+	create_test!(seal_deposit_event);
+	create_test!(seal_deposit_event_per_topic_and_data);
 	create_test!(seal_hash_sha2_256);
 	create_test!(seal_hash_sha2_256_per_kb);
 	create_test!(seal_hash_keccak_256);
